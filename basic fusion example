@@ -1,0 +1,106 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ------------------------
+# Parameters
+# ------------------------
+num_particles = 5000
+time_steps = 500
+tap_efficiency = 0.05
+fusion_threshold = 0.3
+injection_rate = 50  # how many particles we inject when needed
+target_core_density = 1200  # desired central density
+height_scale = 50.0  # MBT scaling height
+r0 = 30.0  # base radius
+
+# ------------------------
+# Bell/MBT geometry function
+# ------------------------
+def bell_radius(h):
+    # MBT scaling: r(h) = r0 * (h/h0 + exp(h/h0) - 1)
+    return r0 * (h / height_scale + np.exp(h / height_scale) - 1)
+
+# ------------------------
+# Initialize particles
+# ------------------------
+positions = np.random.uniform(-r0, r0, (num_particles, 3))
+velocities = np.random.normal(0, 0.1, (num_particles, 3))
+
+# Trackers
+core_density = []
+temperature_proxy = []
+net_energy = []
+injection_count = 0
+
+energy_tap = 0.0
+
+# ------------------------
+# Simulation loop
+# ------------------------
+for t in range(time_steps):
+    # Distance from center
+    r = np.linalg.norm(positions, axis=1)
+    
+    # Core density (inside radius < 10)
+    density = np.sum(r < 10)
+    core_density.append(density)
+    
+    # Temperature proxy
+    temp = np.mean(np.linalg.norm(velocities, axis=1)**2)
+    temperature_proxy.append(temp)
+    
+    # ------------------------
+    # Particle injection based on density deficit
+    # ------------------------
+    if density < target_core_density:
+        # inject particles near edge
+        new_particles = np.random.uniform(-r0, r0, (injection_rate, 3))
+        positions = np.vstack((positions, new_particles))
+        velocities = np.vstack((velocities, np.random.normal(0, 0.1, (injection_rate, 3))))
+        injection_count += 1
+    
+    # ------------------------
+    # Forces
+    # ------------------------
+    inward_force = -positions * 0.001
+    outward_force = positions * 0.0002 * (temp > fusion_threshold)
+    
+    # Soft boundary based on bell shape
+    heights = positions[:, 2]
+    allowed_radii = bell_radius(np.abs(heights))
+    radial_r = np.linalg.norm(positions[:, :2], axis=1)
+    outside = radial_r > allowed_radii
+    velocities[outside, :2] *= -0.5  # bounce in XY plane
+    
+    velocities += inward_force + outward_force
+    positions += velocities
+    
+    # Energy extraction
+    extracted = tap_efficiency * max(0, density - 50) * temp
+    energy_tap += extracted
+    
+    # Container cost (fixed, because container is static shape)
+    container_cost = 0.01 * np.sum(np.linalg.norm(velocities, axis=1))
+    net_energy.append(energy_tap - container_cost)
+
+# ------------------------
+# Results
+# ------------------------
+plt.figure(figsize=(12,5))
+plt.subplot(1,2,1)
+plt.plot(core_density, label='Core Density')
+plt.axhline(target_core_density, color='gray', linestyle='--', label='Target Density')
+plt.legend()
+plt.title("Core Density vs Time")
+
+plt.subplot(1,2,2)
+plt.plot(net_energy, color='purple', label='Net Energy')
+plt.axhline(0, color='gray', linestyle='--')
+plt.title(f"Net Energy vs Time\nFinal Net = {net_energy[-1]:.2f}")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+print(f"Total fuel injections performed: {injection_count}")
+print(f"Final particle count: {positions.shape[0]}")
+print(f"Final fusion output (last step): {net_energy[-1]:.2f}")
